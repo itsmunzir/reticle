@@ -175,3 +175,60 @@ describe('a closed native <details> hides what the summary does not contain', ()
     }
   });
 });
+
+describe('visibility composes across a shadow boundary', () => {
+  /**
+   * Query candidates include shadow content — open roots always, captured closed roots too
+   * (`embeddedRootsUnder` in query.ts). `parentElement` is null at the top of a shadow tree
+   * (a ShadowRoot is a DocumentFragment), so a walk that stops there never sees the host, and
+   * whatever hides the host — a closed `<details>`, `display:none`, `aria-hidden` — hides
+   * nothing. A web component inside a collapsed disclosure would read `visible` again.
+   */
+  function mountHostedControl(): { details: HTMLDetailsElement; button: HTMLElement } {
+    const details = document.createElement('details');
+    const summary = document.createElement('summary');
+    summary.textContent = 'Connection status and setup';
+    const host = document.createElement('div');
+    const shadow = host.attachShadow({ mode: 'open' });
+    const button = document.createElement('button');
+    button.textContent = 'Retry';
+    shadow.append(button);
+    details.append(summary, host);
+    document.body.append(details);
+    return { details, button };
+  }
+
+  it('hides a shadow control whose host sits inside a closed details', () => {
+    const { details, button } = mountHostedControl();
+    try {
+      expect(isVisible(button)).toBe(false);
+    } finally {
+      details.remove();
+    }
+  });
+
+  it('hides a shadow control whose host is not rendered', () => {
+    const host = document.createElement('div');
+    host.style.display = 'none'; // the own-box signals never reach into the host's shadow tree
+    const shadow = host.attachShadow({ mode: 'open' });
+    const button = document.createElement('button');
+    button.textContent = 'Retry';
+    shadow.append(button);
+    document.body.append(host);
+    try {
+      expect(isVisible(button)).toBe(false);
+    } finally {
+      host.remove();
+    }
+  });
+
+  it('still reports a shadow control visible when its host chain is', () => {
+    const { details, button } = mountHostedControl();
+    details.setAttribute('open', '');
+    try {
+      expect(isVisible(button)).toBe(true);
+    } finally {
+      details.remove();
+    }
+  });
+});

@@ -371,12 +371,28 @@ function selfHidden(el: Element): boolean {
 }
 
 /**
- * Whether the element is actually visible (not display:none/hidden/aria-hidden/opacity:0), walking to
- * root. This is an O(depth) forced-style walk PER node; `memo` (optional, scoped to ONE synchronous
- * query pass) caches the full inherited result per element so a broad state-filtered query stops
- * re-resolving getComputedStyle up the same ancestor chain for every sibling. Sound because the DOM is
- * static for the pass's duration — the cache MUST be a per-call Map, never module-level (that would go
- * stale the instant the app mutates, the same trap the shadow-root note in query.ts documents).
+ * The next node up the COMPOSED tree: `parentElement`, or the shadow host when the walk reaches
+ * the top of a shadow tree. A ShadowRoot is a DocumentFragment, so `parentElement` is null there,
+ * and query candidates include shadow content (open roots always, captured closed roots too — see
+ * `embeddedRootsUnder`). Without the hop, nothing that hides the host — a closed `<details>`,
+ * display:none, aria-hidden — is ever seen by the walk inside the host's shadow tree.
+ */
+function parentAcrossShadowBoundary(el: Element): Element | null {
+  if (null !== el.parentElement) return el.parentElement;
+  // `host` exists on a ShadowRoot and not on a Document, the other thing getRootNode() returns
+  // for a connected element.
+  const host: Element | undefined = (el.getRootNode() as Partial<ShadowRoot>).host;
+  return host ?? null;
+}
+
+/**
+ * Whether the element is actually visible (not display:none/hidden/aria-hidden/opacity:0/inside a
+ * closed `<details>`), walking to root across shadow boundaries. This is an O(depth) forced-style
+ * walk PER node; `memo` (optional, scoped to ONE synchronous query pass) caches the full inherited
+ * result per element so a broad state-filtered query stops re-resolving getComputedStyle up the
+ * same ancestor chain for every sibling. Sound because the DOM is static for the pass's duration —
+ * the cache MUST be a per-call Map, never module-level (that would go stale the instant the app
+ * mutates, the same trap the shadow-root note in query.ts documents).
  */
 /**
  * True when the element is inside the viewport right now: visible AND its bounding box intersects
@@ -399,7 +415,7 @@ export function isVisible(el: Element, memo?: Map<Element, boolean>): boolean {
   if (!el.isConnected) return false;
   const cached = memo?.get(el);
   if (cached !== undefined) return cached;
-  const parent = el.parentElement;
+  const parent = parentAcrossShadowBoundary(el);
   // Each cached boolean already folds in that node's own aria-hidden/[hidden]/display/visibility/opacity,
   // so inherited visibility composes by AND up the chain and a sibling short-circuits at the first
   // cached ancestor.

@@ -56,6 +56,25 @@ suite(
       const result = matchQuery({ by: 'testid', value: 'row' }, 'visible');
       expect(result.count).toBe(3); // both summaries and the open content — never the closed content
     });
+
+    it('hides a shadow control whose host sits inside a closed details', () => {
+      // Queries collect shadow content, and the visibility walk has to cross the boundary to
+      // the host — otherwise the fix above is evaded by any web component.
+      const details = document.createElement('details');
+      const summary = document.createElement('summary');
+      summary.setAttribute('data-testid', 'row');
+      summary.textContent = 'closed';
+      const host = document.createElement('div');
+      const shadow = host.attachShadow({ mode: 'open' });
+      const button = document.createElement('button');
+      button.setAttribute('data-testid', 'row');
+      button.textContent = 'Retry';
+      shadow.append(button);
+      details.append(summary, host);
+      document.body.append(details);
+      const result = matchQuery({ by: 'testid', value: 'row' }, 'visible');
+      expect(result.count).toBe(1); // the summary — the host is closed away, shadow control included
+    });
   },
 );
 
