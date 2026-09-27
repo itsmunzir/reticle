@@ -43,6 +43,19 @@ suite(
       const result = matchQuery({ by: 'testid', value: 'row' }, 'visible');
       expect(result.count).toBe(1); // only the shown one — inherited visibility via the memo is correct
     });
+
+    it('hides the content of a closed details and keeps its summary matchable', () => {
+      // The field report behind this: a control inside a closed native <details> matched
+      // `visible`, so expanding the summary came back already_true/no-fault. The summary must
+      // stay matchable — it is the control the agent clicks — while its content does not.
+      document.body.innerHTML =
+        '<details><summary data-testid="row">closed</summary>' +
+        '<h2 data-testid="row">hidden</h2></details>' +
+        '<details open><summary data-testid="row">open</summary>' +
+        '<h2 data-testid="row">shown</h2></details>';
+      const result = matchQuery({ by: 'testid', value: 'row' }, 'visible');
+      expect(result.count).toBe(3); // both summaries and the open content — never the closed content
+    });
   },
 );
 

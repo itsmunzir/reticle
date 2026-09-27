@@ -327,10 +327,34 @@ export function getValue(el: Element): string | undefined {
   return valueNow ?? undefined;
 }
 
-/** Whether the element's OWN box hides it — one forced-style resolution, no ancestor walk. */
+/**
+ * Whether the nearest `<details>` ancestor is closed and does not keep this element on screen.
+ *
+ * A closed native `<details>` unrenders its content — everything except its first `<summary>`
+ * child — without setting `display:none` on it, and in some engines the content keeps a layout
+ * box, so the own-box signals cannot see it. Reported from the field: a control inside a closed
+ * `<details>` read as `visible`, and the expanding click returned `already_true`/no-fault. Only
+ * the first summary child stays on screen; an element inside it stays visible, and a nested open
+ * `<details>` inside a closed one is still hidden — the ancestor walk in isVisible composes it.
+ */
+function hiddenInsideClosedDetails(el: Element): boolean {
+  const parent = el.parentElement;
+  if (null === parent) return false;
+  const details = parent.closest('details');
+  if (null === details || details.hasAttribute('open')) return false;
+  const summary = details.querySelector(':scope > summary');
+  return null === summary || !summary.contains(el);
+}
+
+/**
+ * Whether the element's OWN box hides it — one forced-style resolution, no composed ancestor
+ * walk. The one ancestor reading is `hiddenInsideClosedDetails`, which consults only the nearest
+ * `<details>` boundary; composing the chain is still isVisible's job.
+ */
 function selfHidden(el: Element): boolean {
   if ('true' === el.getAttribute('aria-hidden')) return true;
   if (isHtmlElement(el) && el.hidden) return true;
+  if (hiddenInsideClosedDetails(el)) return true;
   const view = el.ownerDocument.defaultView;
   if (view !== null) {
     const style = view.getComputedStyle(el);
