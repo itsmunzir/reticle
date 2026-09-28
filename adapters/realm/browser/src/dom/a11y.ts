@@ -5,6 +5,10 @@ import { inspectChart } from './chart.js';
 import { isSensitiveKey } from '@/security/serialization.js';
 import { formatSource, sourceFromDom } from './addressing/source.js';
 
+const HTML_DETAILS_TAG = 'details';
+const HTML_DETAILS_OPEN_ATTRIBUTE = 'open';
+const HTML_DIRECT_SUMMARY_SELECTOR = ':scope > summary';
+
 /**
  * Roles whose accessible name comes from their text content (ARIA's `nameFrom: author content`).
  *
@@ -340,9 +344,9 @@ export function getValue(el: Element): string | undefined {
 function hiddenInsideClosedDetails(el: Element): boolean {
   const parent = el.parentElement;
   if (null === parent) return false;
-  const details = parent.closest('details');
-  if (null === details || details.hasAttribute('open')) return false;
-  const summary = details.querySelector(':scope > summary');
+  const details = parent.closest(HTML_DETAILS_TAG);
+  if (null === details || details.hasAttribute(HTML_DETAILS_OPEN_ATTRIBUTE)) return false;
+  const summary = details.querySelector(HTML_DIRECT_SUMMARY_SELECTOR);
   return null === summary || !summary.contains(el);
 }
 
