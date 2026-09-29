@@ -1050,6 +1050,32 @@ describe('installNetwork (Next-Action header)', () => {
     expect(eventOf(events, EventType.NET_REQUEST)[NEXT_ACTION_FIELD]).toBe(ACTION_ID);
   });
 
+  it('keeps the action id on a rejected fetch, so it cannot pool the endpoint', async () => {
+    const { emit, events } = collect();
+    window.fetch = vi.fn(() => Promise.reject(new Error('offline')));
+    teardown = installNetwork(emit);
+    await expect(
+      window.fetch('http://localhost:8787/page', {
+        method: 'POST',
+        headers: { 'Next-Action': ACTION_ID },
+      }),
+    ).rejects.toThrow('offline');
+    expect(eventOf(events, EventType.NET_REQUEST)[NEXT_ACTION_FIELD]).toBe(ACTION_ID);
+  });
+
+  it('does not read the action from a Request whose headers an init replaced', async () => {
+    // `init.headers` REPLACES the Request's own rather than merging into them, so the outgoing
+    // request does not carry the action the Request named.
+    const { emit, events } = collect();
+    teardown = installNetwork(emit);
+    const request = new Request('http://localhost:8787/page', {
+      method: 'POST',
+      headers: { 'Next-Action': ACTION_ID },
+    });
+    await window.fetch(request, { headers: { 'X-Other': '1' } });
+    expect(eventOf(events, EventType.NET_REQUEST)).not.toHaveProperty(NEXT_ACTION_FIELD);
+  });
+
   it('omits the field for a request that carries no action header', async () => {
     const { emit, events } = collect();
     teardown = installNetwork(emit);

@@ -243,11 +243,16 @@ function methodOf(input: RequestInfo | URL, init: RequestInit | undefined): stri
  * fingerprint, so without this the calls are indistinguishable. The value identifies the code that
  * ran, not the data it carried, so it is recorded verbatim. `Headers` normalises the three accepted
  * shapes of `init.headers` (a `Headers` instance, a pair list, or a plain object) and matches the
- * name case-insensitively; a `Request` passed instead of an init carries its own.
+ * name case-insensitively.
+ *
+ * An `init.headers` REPLACES the `Request`'s own headers rather than merging into them, so the
+ * `Request` is read only when the caller passed no headers at all. Falling back past a replacement
+ * would record an action the outgoing request does not carry.
  */
 function nextActionOf(input: RequestInfo | URL, init: RequestInit | undefined): string | undefined {
-  const fromInit = observeValue(() => new Headers(init?.headers).get(NEXT_ACTION_HEADER));
-  if (fromInit !== undefined && null !== fromInit) return fromInit;
+  if (init !== undefined && init.headers !== undefined) {
+    return observeValue(() => new Headers(init.headers).get(NEXT_ACTION_HEADER)) ?? undefined;
+  }
   if (input instanceof Request) {
     return observeValue(() => input.headers.get(NEXT_ACTION_HEADER)) ?? undefined;
   }
@@ -551,6 +556,10 @@ export function installNetwork(emit: Emit, opts: NetworkOptions = {}): Teardown 
           durationMs: Math.round(performance.now() - start),
           initiator: 'fetch',
           ...initiatorFields,
+          // A rejected write still has an identity. Without it, one failed call at an endpoint
+          // pools every identified call there into the unknown bucket, and two successful actions
+          // that never repeated read as a duplicate.
+          ...nextActionFields,
         });
       });
       throw error;

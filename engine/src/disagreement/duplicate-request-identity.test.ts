@@ -137,16 +137,20 @@ describe('two different Server Actions posted to one endpoint', () => {
     expect(duplicates(events)).toEqual([]);
   });
 
-  it('are still a duplicate when the same action ran twice with the same body', () => {
+  it('are a duplicate with no hedge when the same action ran twice with the same body', () => {
     const events = [write(SAVE_PLAYER, SAVE_ACTION), write(SAVE_PLAYER, SAVE_ACTION), domChanged()];
-    expect(duplicates(events).map((c) => c.kind)).toEqual([ContradictionKind.DUPLICATE_REQUEST]);
-  });
-
-  it('are still a duplicate when the same action ran twice with unreadable bodies', () => {
-    const events = [write(undefined, SAVE_ACTION), write(undefined, SAVE_ACTION), domChanged()];
     const [found] = duplicates(events);
     expect(found?.kind).toBe(ContradictionKind.DUPLICATE_REQUEST);
     expect(found?.detail).not.toContain('could not');
+  });
+
+  it('keep the unestablished-identity hedge when the same action ran twice with unreadable bodies', () => {
+    // The action id says which code ran, not what the two submissions carried — two runs of one
+    // action can send different form data, and the record cannot tell them apart.
+    const events = [write(undefined, SAVE_ACTION), write(undefined, SAVE_ACTION), domChanged()];
+    const [found] = duplicates(events);
+    expect(found?.kind).toBe(ContradictionKind.DUPLICATE_REQUEST);
+    expect(found?.detail).toContain('could not be established');
   });
 
   it('are not a duplicate when the same action carried different bodies', () => {
