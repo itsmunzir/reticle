@@ -1,6 +1,8 @@
 import {
   BlindSpotKind,
   EventType,
+  NEXT_ACTION_FIELD,
+  NEXT_ACTION_HEADER,
   REQUEST_SHAPE_FIELD,
   REQUEST_SHAPE_NONE,
   RETICLE_WS_PATH,
@@ -235,6 +237,24 @@ function methodOf(input: RequestInfo | URL, init: RequestInit | undefined): stri
 }
 
 /**
+ * The write discriminator a Next.js Server Action carries, from whichever half the caller used.
+ *
+ * Every Server Action POSTs to the page's own URL, and the usual `FormData` body has no shape
+ * fingerprint, so without this the calls are indistinguishable. The value identifies the code that
+ * ran, not the data it carried, so it is recorded verbatim. `Headers` normalises the three accepted
+ * shapes of `init.headers` (a `Headers` instance, a pair list, or a plain object) and matches the
+ * name case-insensitively; a `Request` passed instead of an init carries its own.
+ */
+function nextActionOf(input: RequestInfo | URL, init: RequestInit | undefined): string | undefined {
+  const fromInit = observeValue(() => new Headers(init?.headers).get(NEXT_ACTION_HEADER));
+  if (fromInit !== undefined && null !== fromInit) return fromInit;
+  if (input instanceof Request) {
+    return observeValue(() => input.headers.get(NEXT_ACTION_HEADER)) ?? undefined;
+  }
+  return undefined;
+}
+
+/**
  * The first app-code frame that fired a request — the in-page answer to a CDP initiator, as file:line.
  * Captured from a fresh Error.stack at call time, skipping Reticle's own wrapper frames. Feeds the
  * causal chain (which code path made this request). Capped; undefined when no stack is available.
@@ -405,6 +425,10 @@ export function installNetwork(emit: Emit, opts: NetworkOptions = {}): Teardown 
     const id = nextId();
     const start = performance.now();
     const method = methodOf(input, init);
+    // Read synchronously, before the request leaves: the identity of the write is what the caller
+    // sent, and a mutated `Headers` after this point is somebody else's observation.
+    const nextAction = nextActionOf(input, init);
+    const nextActionFields = nextAction === undefined ? {} : { [NEXT_ACTION_FIELD]: nextAction };
     const urlFields = netUrlFields(rawUrl);
     const url = urlFields.url;
     const initiatorStack = observeValue(() => initiatorFrame());
@@ -447,6 +471,7 @@ export function installNetwork(emit: Emit, opts: NetworkOptions = {}): Teardown 
             ...resourceTiming(rawUrl),
             ...netResponseMeta(res.statusText, contentType, res.headers.get('content-length')),
             ...projectRequestBody(init?.body, captureBodies),
+            ...nextActionFields,
             ...responseBodyFields,
             // Applied LAST so a reinterpreted verdict wins over the transport's own fields — a Tauri
             // command that returned Err still travelled down a fetch that answered HTTP 200.

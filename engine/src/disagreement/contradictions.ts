@@ -1,6 +1,7 @@
 import {
   ContradictionKind,
   EventType,
+  NEXT_ACTION_FIELD,
   REQUEST_SHAPE_FIELD,
   isAbsenceDerived,
   isSameDocument,
@@ -57,12 +58,25 @@ export type {
  * say what this request carried — a body the page could not read as text, or an SDK too old to
  * compute a fingerprint — and that is an ABSENCE of identity, not an identity shared with every
  * other silent request.
+ *
+ * A Server Action's action id joins both halves, and it is the half that survives a `FormData`
+ * body: several actions POST to the page's own URL, so without it every call is an unknown identity
+ * pooled with all the others, and no fingerprint can separate two that share a shape. An action id
+ * is a KNOWN identity on its own — two calls that named different actions are different writes —
+ * and the fingerprint still separates two runs of the SAME action that carried different bodies.
  */
 function identityOf(event: ReticleEvent): string | undefined {
+  const action = asString(event.data[NEXT_ACTION_FIELD]);
   const shape = asString(event.data[REQUEST_SHAPE_FIELD]);
-  if (shape !== undefined && 0 !== shape.length) return shape;
   const body = asString(event.data['requestBody']);
-  return body === undefined || 0 === body.length ? undefined : body;
+  const carried =
+    shape !== undefined && 0 !== shape.length
+      ? shape
+      : body === undefined || 0 === body.length
+        ? undefined
+        : body;
+  if (action === undefined || 0 === action.length) return carried;
+  return carried === undefined ? action : `${action}:${carried}`;
 }
 
 /** Split calls to one endpoint into the sets that sent the same thing. Callers check first that
