@@ -1,5 +1,15 @@
 import { ElementState, REDACTED_VALUE, type ElementDescriptor } from '@reticlehq/core';
-import { isButton, isHtmlElement, isImage, isInput, isSelect, isTextArea } from './realm.js';
+import {
+  isButton,
+  isHtmlElement,
+  isImage,
+  isInput,
+  isMeter,
+  isOutput,
+  isProgress,
+  isSelect,
+  isTextArea,
+} from './realm.js';
 import { refs } from './addressing/refs.js';
 import { inspectChart } from './chart.js';
 import { isSensitiveKey } from '@/security/serialization.js';
@@ -232,7 +242,25 @@ export function getAccessibleName(el: Element): string {
     if (alt !== null) return alt.trim();
   }
 
-  if (isInput(el) || isTextArea(el) || isSelect(el)) {
+  // `.labels` exists on every labelable element (input, textarea, select, button, meter, output,
+  // progress) per the HTML spec, not only the three handled below, so this read must not be gated
+  // on `isInput/isTextArea/isSelect` alone: a `<button role="combobox">` (or `<meter>`/`<output>`)
+  // with a native `<label for>` was falling through to its own text content or NAME_FROM_CONTENT,
+  // and a `by: role` + name lookup for it found nothing.
+  //
+  // It must still be gated on THAT full labelable set, and not read unconditionally: this function
+  // runs over every element a snapshot walks, including custom elements an app defines with its own
+  // `labels` property for its own purposes, so touching `.labels` on a non-labelable element risks a
+  // hostile getter or a value that isn't a NodeList.
+  const isLabelable =
+    isInput(el) ||
+    isTextArea(el) ||
+    isSelect(el) ||
+    isButton(el) ||
+    isMeter(el) ||
+    isOutput(el) ||
+    isProgress(el);
+  if (isLabelable) {
     const labels = el.labels;
     if (labels !== null && labels.length > 0) {
       const text = [...labels]
@@ -241,6 +269,9 @@ export function getAccessibleName(el: Element): string {
         .trim();
       if (text.length > 0) return text;
     }
+  }
+
+  if (isInput(el) || isTextArea(el) || isSelect(el)) {
     // Submit-like inputs carry their name on `value`, exactly where the visible caption comes
     // from: `<input type="submit" value="Send">` renders a button reading Send. Without this the
     // descriptor printed `button ""` while `by: text` found the very same input by "Send", so the
