@@ -754,7 +754,14 @@ export const ACT_TOOLS: ToolDef[] = [
         });
         // The single field an agent reads. Everything below it is the evidence it was derived from;
         // this is the only one that has to be interpreted, and now it interprets itself.
-        const outcomePending = acceptedWriteLabels(windowEvents);
+        // Same routing as the assert path (#1120), fed by the links this verdict PROVED. On red,
+        // `gradedLinks` is the declared surface (every anyOf branch), which must not exempt a 202
+        // the verdict never rested on — so only a green passes it through.
+        const outcomePending = acceptedWriteLabels(windowEvents, {
+          appUrl: session.url,
+          background: session.background,
+          asserted: verdict.pass ? gradedLinks : [],
+        });
         const outcomeUnread = unreadWriteLabels(windowEvents);
         const stillInFlight = inFlightRequestLabels(windowEvents, session.url, session.background);
         const { decision, durable } = await withDurability(
