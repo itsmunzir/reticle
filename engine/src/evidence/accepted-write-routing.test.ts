@@ -26,10 +26,11 @@ const request = (method: string, url: string, status: number): ReticleEvent =>
     data: { method, url, status },
   }) as unknown as ReticleEvent;
 
-const link = (urlContains: string, status?: number): ExpectedLink => ({
+const link = (urlContains: string, status?: number, method?: string): ExpectedLink => ({
   kind: ConsequenceKind.NET,
   urlContains,
   ...(status === undefined ? {} : { status }),
+  ...(method === undefined ? {} : { method }),
 });
 
 describe('a 202 that is not the outcome of the claim', () => {
@@ -95,6 +96,38 @@ describe('a 202 the claim itself asserted on', () => {
         asserted: [link('/api/save', 200)],
       }),
     ).toEqual(['POST /api/save']);
+  });
+
+  it('an anyOf whose 200 branch ALSO held does not exempt the 202', () => {
+    // Both branches currently pass (a 200 and a 202 on the endpoint), so the proof carries both
+    // links. The verdict could have been green without the acceptance, and the accepted write's
+    // outcome is still owed — only a request whose every proven link says 202 is the claim's own.
+    expect(
+      acceptedWriteLabels([request('POST', '/api/save', HTTP_ACCEPTED)], {
+        appUrl: APP,
+        asserted: [link('/api/save', 200), link('/api/save', HTTP_ACCEPTED)],
+      }),
+    ).toEqual(['POST /api/save']);
+  });
+
+  it('a link that names a different method does not exempt the write', () => {
+    // `net` distinguishes methods, and the links must too: a claim about `GET /save` does not
+    // settle the `POST /save` that is still pending.
+    expect(
+      acceptedWriteLabels([request('POST', '/api/save', HTTP_ACCEPTED)], {
+        appUrl: APP,
+        asserted: [link('/api/save', HTTP_ACCEPTED, 'GET')],
+      }),
+    ).toEqual(['POST /api/save']);
+  });
+
+  it('a link with the matching method still exempts it', () => {
+    expect(
+      acceptedWriteLabels([request('POST', '/api/save', HTTP_ACCEPTED)], {
+        appUrl: APP,
+        asserted: [link('/api/save', HTTP_ACCEPTED, 'POST')],
+      }),
+    ).toEqual([]);
   });
 
   it('matches a URL the way the predicate did, raw when redaction rewrote it', () => {

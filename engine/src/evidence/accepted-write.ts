@@ -79,7 +79,7 @@ export function acceptedWriteLabels(
     // The same split `splitForeignTraffic` makes for every other rule: somebody else's origin, or
     // an endpoint the project itself declared as background, is not the app's work under test.
     if (isForeignTraffic(url, filter.appUrl, filter.background ?? [])) continue;
-    if (isAssertedAcceptance(urlForMatch(event.data), filter.asserted)) continue;
+    if (isAssertedAcceptance(method, urlForMatch(event.data), filter.asserted)) continue;
     const label = `${method} ${url ?? ''}`.trim();
     if ('' !== label && !labels.includes(label)) labels.push(label);
   }
@@ -87,20 +87,34 @@ export function acceptedWriteLabels(
 }
 
 /**
- * Did the claim's OWN proven evidence assert this request's acceptance?
+ * Did the claim's OWN proven evidence settle this exact request?
+ *
+ * For the request to be exempt, EVERY proven link that names it must assert `status: 202`. One link
+ * that names the same URL with another status — a 200 branch of an `anyOf` that also held, or a
+ * presence-only clause — means the verdict could have been green without this acceptance, and the
+ * accepted write's outcome is still owed. Method is matched when the link carries one, so a claim
+ * about `GET /save` cannot exempt the pending `POST /save`.
  *
  * `urlForMatch` and not `url`: a predicate matches the raw path, and redaction rewrites some public
  * REST paths, so matching the displayed URL would drop the exemption for exactly the calls a
  * predicate can still name.
  */
-function isAssertedAcceptance(url: string, asserted: readonly ExpectedLink[] | undefined): boolean {
+function isAssertedAcceptance(
+  method: string,
+  url: string,
+  asserted: readonly ExpectedLink[] | undefined,
+): boolean {
   if (asserted === undefined) return false;
-  return asserted.some(
+  const naming = asserted.filter(
     (link) =>
       ConsequenceKind.NET === link.kind &&
-      HTTP_ACCEPTED === link.status &&
       link.urlContains !== undefined &&
-      url.includes(link.urlContains),
+      url.includes(link.urlContains) &&
+      (link.method === undefined || link.method.toUpperCase() === method),
+  );
+  return (
+    naming.length > 0 &&
+    naming.every((link) => ConsequenceKind.NET === link.kind && HTTP_ACCEPTED === link.status)
   );
 }
 
