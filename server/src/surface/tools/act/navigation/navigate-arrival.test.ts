@@ -253,6 +253,39 @@ describe('awaitArrival', () => {
     });
   });
 
+  it('confirms a fragment navigation without waiting for a document change', async () => {
+    // A fragment-only navigation changes the URL without replacing the document, so there is no
+    // replacement to wait for — the connected document IS the arrival.
+    const { sessions } = fakeSessions([[{ id: 'driven', url: TARGET, documentId: 'doc-old' }]]);
+    const scope: ArrivalScope = {
+      navigatedSession: fakeSession('driven', `${TARGET}#intro`, false, 'doc-old'),
+      navigatedFrom: `${TARGET}#intro`,
+      navigatedFromDocumentId: 'doc-old',
+      priorIds: new Set(['driven']),
+    };
+    await expect(awaitArrival(sessions, TARGET, scope, 500, fakeClock(100))).resolves.toEqual({
+      sessionId: 'driven',
+    });
+  });
+
+  it('does not let another tab confirm while the driven document is still connected', async () => {
+    // A second tab reaching the target during a same-URL navigation is not the replacement the
+    // caller waits for; the still-connected driven document is proof this navigation is in flight.
+    const { sessions } = fakeSessions([
+      [
+        { id: 'driven', url: TARGET, documentId: 'doc-old' },
+        { id: 'other-tab', url: TARGET, documentId: 'doc-other' },
+      ],
+    ]);
+    const scope: ArrivalScope = {
+      navigatedSession: fakeSession('driven', TARGET, false, 'doc-old'),
+      navigatedFrom: TARGET,
+      navigatedFromDocumentId: 'doc-old',
+      priorIds: new Set(['driven']),
+    };
+    await expect(awaitArrival(sessions, TARGET, scope, 500, fakeClock(100))).resolves.toBeNull();
+  });
+
   it('reports the session that actually arrived, not the zombie scanned before it', async () => {
     // `sessions.all()` is Map insertion order, so an older stale row is scanned FIRST. That is what
     // made the wrong id the likely answer rather than a coin flip.
