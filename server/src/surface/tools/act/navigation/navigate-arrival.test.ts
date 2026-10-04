@@ -14,11 +14,17 @@ import type { Session } from '@/portal/session/session.js';
 import type { SessionManager } from '@/portal/session/session-manager.js';
 
 /** A minimal Session-shaped object for the successor logic used by `awaitArrival`. */
-function fakeSession(id: string, url: string, openedBefore = false): Session {
+function fakeSession(id: string, url: string, openedBefore = false, documentId?: string): Session {
   return {
     id,
     url,
+    documentId,
     projectId: undefined,
+    // The real Session derives this from the most recent stamped event; the fake reads the slot the
+    // moving snapshots overwrite.
+    get currentDocumentId(): string | undefined {
+      return (this as unknown as { documentId?: string }).documentId;
+    },
     staleMs: () => (openedBefore ? 1_000 : 0),
     agentIdleMs: () => 100,
   } as unknown as Session;
@@ -30,7 +36,7 @@ function fakeSession(id: string, url: string, openedBefore = false): Session {
  * `awaitArrival` normally only needs `all()`, while successor detection additionally needs `get()`.
  * Keeping both here lets these tests exercise the same successor path used by the real manager.
  */
-function fakeSessions(urlsOverTime: { id: string; url: string }[][]): {
+function fakeSessions(urlsOverTime: { id: string; url: string; documentId?: string }[][]): {
   sessions: SessionManager;
   looks: () => number;
 } {
@@ -41,15 +47,16 @@ function fakeSessions(urlsOverTime: { id: string; url: string }[][]): {
   const buildSnapshot = (index: number): Session[] => {
     const snapshot = urlsOverTime[Math.min(index, urlsOverTime.length - 1)] ?? [];
 
-    return snapshot.map(({ id, url }) => {
+    return snapshot.map(({ id, url, documentId }) => {
       const existing = sessionsById.get(id);
 
       if (existing !== undefined) {
         existing.url = url;
+        (existing as unknown as { documentId: string | undefined }).documentId = documentId;
         return existing;
       }
 
-      const session = fakeSession(id, url);
+      const session = fakeSession(id, url, false, documentId);
       sessionsById.set(id, session);
       return session;
     });
@@ -195,6 +202,54 @@ describe('awaitArrival', () => {
     };
     await expect(awaitArrival(sessions, TARGET, scope, 500, fakeClock(100))).resolves.toEqual({
       sessionId: 'driven',
+    });
+  });
+
+  it('does not confirm a same-page navigation while the OLD document is still connected', async () => {
+    // Navigating to the page already shown (a sign-in flow that redirects to itself) replaces the
+    // document. The old document stays connected until the replacement reports, and its presence at
+    // the target is not arrival yet — the report's replay started here and lost the document (#1320).
+    const { sessions, looks } = fakeSessions([
+      [{ id: 'driven', url: TARGET, documentId: 'doc-old' }],
+    ]);
+    const scope: ArrivalScope = {
+      navigatedSession: fakeSession('driven', TARGET, false, 'doc-old'),
+      navigatedFrom: TARGET,
+      navigatedFromDocumentId: 'doc-old',
+      priorIds: new Set(['driven']),
+    };
+    await expect(awaitArrival(sessions, TARGET, scope, 500, fakeClock(100))).resolves.toBeNull();
+    expect(looks()).toBeGreaterThan(1);
+  });
+
+  it('confirms a same-page navigation once the replacement document reports', async () => {
+    const { sessions, looks } = fakeSessions([
+      [{ id: 'driven', url: TARGET, documentId: 'doc-old' }],
+      [{ id: 'driven', url: TARGET, documentId: 'doc-old' }],
+      [{ id: 'driven', url: TARGET, documentId: 'doc-new' }],
+    ]);
+    const scope: ArrivalScope = {
+      navigatedSession: fakeSession('driven', TARGET, false, 'doc-old'),
+      navigatedFrom: TARGET,
+      navigatedFromDocumentId: 'doc-old',
+      priorIds: new Set(['driven']),
+    };
+    await expect(awaitArrival(sessions, TARGET, scope, 500, fakeClock(100))).resolves.toEqual({
+      sessionId: 'driven',
+    });
+    expect(looks()).toBeGreaterThan(1);
+  });
+
+  it('confirms a same-page navigation that reconnects under a new id', async () => {
+    const { sessions } = fakeSessions([[{ id: 'successor', url: TARGET, documentId: 'doc-new' }]]);
+    const scope: ArrivalScope = {
+      navigatedSession: fakeSession('driven', TARGET, false, 'doc-old'),
+      navigatedFrom: TARGET,
+      navigatedFromDocumentId: 'doc-old',
+      priorIds: new Set(['driven']),
+    };
+    await expect(awaitArrival(sessions, TARGET, scope, 500, fakeClock(100))).resolves.toEqual({
+      sessionId: 'successor',
     });
   });
 

@@ -136,9 +136,14 @@ export const BROWSER_TOOLS: ToolDef[] = [
                 target,
                 {
                   // Keep the original Session object and URL so arrival detection can distinguish
-                  // an in-progress navigation from a document that arrived somewhere else.
+                  // an in-progress navigation from a document that arrived somewhere else. The
+                  // document identity lets a same-URL navigation wait for its replacement instead
+                  // of confirming the document it is about to destroy (#1320).
                   navigatedSession: session,
                   navigatedFrom: session.url,
+                  ...(session.currentDocumentId === undefined
+                    ? {}
+                    : { navigatedFromDocumentId: session.currentDocumentId }),
                   priorIds,
                 },
                 timeoutMs,

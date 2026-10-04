@@ -92,6 +92,15 @@ export interface ArrivalScope {
    */
   navigatedFrom: string;
 
+  /**
+   * The DOCUMENT the session was on when the navigation was dispatched.
+   *
+   * A navigation to the page already shown replaces the document without changing the URL, so the
+   * old document is still the connected one until the replacement reports (#1320). Only a different
+   * document identity proves the replacement; `undefined` on both sides proves nothing and waits.
+   */
+  navigatedFromDocumentId?: string;
+
   /** Sessions already on the target before dispatch cannot prove this navigation arrived. */
   priorIds: ReadonlySet<string>;
 }
@@ -118,12 +127,17 @@ function findArrival(
   currentSession: Session,
 ): NavigateArrival | null {
   let arrived: NavigateArrival | null = null;
+  // Navigating to the page already shown replaces its document without moving the URL, so the
+  // OLD document is still the connected one at the first looks; its presence there is not
+  // arrival until the replacement reports a different document identity (#1320).
+  const samePageNavigation = samePage(scope.navigatedFrom, target);
 
   for (const s of sessions.all()) {
     // The currently tracked document gets priority because it is the strongest
     // evidence of where this navigation went.
     if (s.id === currentSession.id) {
       if (samePage(s.url, target)) {
+        if (samePageNavigation && s.currentDocumentId === scope.navigatedFromDocumentId) continue;
         return { sessionId: s.id };
       }
 
