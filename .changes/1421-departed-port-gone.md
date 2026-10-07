@@ -1,0 +1,3 @@
+### Fixed
+
+- **`@reticlehq/server` — the no-session hint no longer says to reopen a page whose server has stopped.** After the dev server stopped and the tab closed, the hint said the wiring was fine and to reopen the last URL — "do not start a second stack" — while nothing listened there, so the advice led nowhere and forbade the restart that helps. When the scan finds nothing at all and the departed session named a URL, the action is now to start the project's own dev server, and the reason names the port that is gone. A scan hit on another port keeps the reopen advice, because the scan is narrow. Closes [#1421](https://github.com/reticlehq/reticle/issues/1421).

@@ -224,6 +224,35 @@ describe('nextActionFor', () => {
     expect(next.command).toBe('reticle open http://localhost:5190/counter?tab=2');
     expect(next.port).toBe(5190);
   });
+
+  // The dev server was stopped, and the port the departed session was on is gone with it. "Reopen
+  // that — do not start a second stack" then points at a dead socket AND forbids the one action
+  // that helps, so the restart command has to win (reticle#1421).
+  it('the departed port is gone and nothing listens: restart, do not reopen the dead url', () => {
+    const next = nextActionFor({
+      everConnected: true,
+      initialized: true,
+      listening: [],
+      dev: DEV,
+      lastKnownUrl: 'http://127.0.0.1:44549/orders',
+    });
+    expect(next.action).toBe(NoSessionAction.START_DEV_SERVER);
+    expect(next.command).toBe('pnpm run dev');
+    expect(next.reason).toContain('44549');
+    expect(next.reason).toMatch(/gone|stopped/i);
+  });
+
+  it('the departed port still answers: reopen it, as before', () => {
+    const next = nextActionFor({
+      everConnected: true,
+      initialized: true,
+      listening: [44549],
+      dev: DEV,
+      lastKnownUrl: 'http://127.0.0.1:44549/orders',
+    });
+    expect(next.action).toBe(NoSessionAction.REOPEN_APP);
+    expect(next.command).toBe('reticle open http://127.0.0.1:44549/orders');
+  });
 });
 
 describe('renderNextAction', () => {

@@ -658,6 +658,19 @@ export function explainNoSession(facts: NoSessionFacts): {
         alreadyListeningClause(listening).trim(),
       );
     }
+    // The dev server that served this session has stopped: the scan finds nothing at all and the
+    // departed session named a url, so "ask the human to reopen the app" points at a dead socket.
+    // Same shape as the next action (#1421) — the prose and the executable half agree on the story.
+    if (0 === listening.length && facts.lastKnownUrl !== undefined && '' !== facts.lastKnownUrl) {
+      return reason(
+        NoSessionReason.TAB_GONE,
+        'no browser session connected, but one WAS connected to this daemon earlier, so the wiring ' +
+          `is correct. ${tabGoneWhat(facts.lastKnownUrl)} The dev server that served it has stopped ` +
+          '— nothing is listening on the ports Reticle scans — so start the app again (the command ' +
+          `is in \`next_action\`). ${RETRY}`,
+        alreadyListeningClause(listening).trim(),
+      );
+    }
     return reason(
       NoSessionReason.TAB_GONE,
       'no browser session connected, but one WAS connected to this daemon earlier, so the wiring ' +

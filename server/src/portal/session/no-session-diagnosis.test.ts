@@ -399,6 +399,22 @@ describe('a vanished session names the last URL it was on', () => {
     expect(plain).not.toMatch(/torn down while on/i);
     expect(plain).toMatch(/tab was closed, navigated away, or hard-reloaded/i);
   });
+
+  // The scan finds nothing at all and the departed session named a url, so "ask the human to
+  // reopen the app" points at a dead socket. The next action starts the dev server for this shape
+  // (#1421); the prose beside it has to say the same thing.
+  it('says the dev server stopped when the scan is empty, matching the next action', () => {
+    const stopped = diagnoseNoSession({
+      everConnected: true,
+      initialized: true,
+      listening: [],
+      port: 4400,
+      lastKnownUrl: 'http://127.0.0.1:44549/orders',
+    });
+    expect(stopped).toMatch(/dev server[^.]*has stopped/i);
+    expect(stopped).toMatch(/start the app again/i);
+    expect(stopped).not.toMatch(/reopen/i);
+  });
 });
 
 /**

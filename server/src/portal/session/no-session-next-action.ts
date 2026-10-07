@@ -154,7 +154,13 @@ export function nextActionFor(facts: NextActionFacts): NoSessionNextAction {
   // (`connectedSinceLastClosure` in the manager). Read as the weaker "a refusal was recorded at
   // some point", the flip trades this bug for its mirror image and blames the token for a tab the
   // human closed. The ordering belongs to the fact; what this branch does with it is then obvious.
-  if (facts.everConnected && true !== facts.authRefused) {
+  // A departed session whose port is ALSO gone is the one shape where "reopen that" points at a
+  // dead socket and forbids the restart that fixes it (#1421). A single missing port proves nothing
+  // on its own — the scan is narrow — so this only falls through when the scan found NOTHING, and
+  // only when the last session named a url to check. With no url there is nothing to check.
+  const departedPortIsGone =
+    0 === facts.listening.length && reopenableUrl(facts.lastKnownUrl) !== undefined;
+  if (facts.everConnected && true !== facts.authRefused && !departedPortIsGone) {
     const listening = facts.listening;
     const only = 1 === listening.length ? listening[0] : undefined;
     // The departed session's own url first: it is where this project's app demonstrably was, while
@@ -220,6 +226,13 @@ export function nextActionFor(facts: NextActionFacts): NoSessionNextAction {
 
   if (0 === facts.listening.length) {
     const dev = facts.dev;
+    // The start advice below follows a departed session whose port is gone. Name it, so the restart
+    // does not read as if nothing had ever run here (#1421).
+    const stopped = facts.everConnected ? reopenableUrl(facts.lastKnownUrl) : undefined;
+    const stoppedNote =
+      stopped === undefined
+        ? ''
+        : ` The session that was on ${redactUrl(stopped.url)} is gone and nothing listens there now.`;
     if (dev === undefined) {
       if (facts.exists !== undefined && !facts.exists('package.json')) {
         const ecosystem = detectNonJsEcosystem(facts.exists);
@@ -242,7 +255,8 @@ export function nextActionFor(facts: NextActionFacts): NoSessionNextAction {
           'nothing is listening on the ports Reticle scans, so the app is probably not running — ' +
           'but this project declares no dev script (no `dev`, `develop` or `start` in its ' +
           'package.json), so there is no command to hand you. Ask the human how their app is ' +
-          'started, and for the URL it serves on.',
+          'started, and for the URL it serves on.' +
+          stoppedNote,
       };
     }
     return {
@@ -267,7 +281,8 @@ export function nextActionFor(facts: NextActionFacts): NoSessionNextAction {
         `starting a second one. This is the project's own ` +
         (undefined === dev.script ? 'launcher' : `\`${dev.script}\` script`) +
         ` — run it in the ` +
-        'background, tell the human it is running, then call reticle_sessions again.',
+        'background, tell the human it is running, then call reticle_sessions again.' +
+        stoppedNote,
     };
   }
 
