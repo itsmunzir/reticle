@@ -207,4 +207,40 @@ describe('detectDevCommandInProject', () => {
       detectDevCommandInProject(DIR, reader(files), listing({ [ROOT]: ['frontend'] })),
     ).toBeUndefined();
   });
+
+  it('prefers the app-shaped directory over one that only has a dev script', () => {
+    const files = {
+      [PKG]: JSON.stringify({ name: 'repo', private: true }),
+      [at('docs/package.json')]: JSON.stringify({ scripts: { dev: 'node docs.js' } }),
+      [at('frontend/package.json')]: JSON.stringify({ scripts: { dev: 'vite' } }),
+    };
+    expect(
+      detectDevCommandInProject(DIR, reader(files), listing({ [ROOT]: ['docs', 'frontend'] })),
+    ).toEqual({ command: 'npm run dev', script: 'dev', directory: 'frontend' });
+  });
+
+  it('finds an undeclared app beside a declared workspace package', () => {
+    const files = {
+      [PKG]: JSON.stringify({ name: 'repo', workspaces: ['packages'] }),
+      [at('frontend/package.json')]: JSON.stringify({ scripts: { dev: 'vite' } }),
+    };
+    const dirs = listing({ [ROOT]: ['packages', 'frontend'], [join(DIR, 'packages')]: [] });
+    expect(detectDevCommandInProject(DIR, reader(files), dirs)).toEqual({
+      command: 'npm run dev',
+      script: 'dev',
+      directory: 'frontend',
+    });
+  });
+
+  it('uses the child lockfile when the app has one of its own', () => {
+    const files = {
+      [PKG]: JSON.stringify({}),
+      [at('pnpm-lock.yaml')]: '',
+      [at('frontend/package.json')]: JSON.stringify({ scripts: { dev: 'vite' } }),
+      [at('frontend/yarn.lock')]: '',
+    };
+    expect(
+      detectDevCommandInProject(DIR, reader(files), listing({ [ROOT]: ['frontend'] })),
+    ).toEqual({ command: 'yarn run dev', script: 'dev', directory: 'frontend' });
+  });
 });

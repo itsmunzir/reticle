@@ -45,7 +45,14 @@ export const NEXT_CONFIG_CANDIDATES = [
  */
 
 /** Directories that are never a workspace package, whatever the layout. */
-const NEVER_A_PACKAGE = new Set(['node_modules', 'dist', 'build', 'out', 'coverage', 'target']);
+export const NEVER_A_PACKAGE = new Set([
+  'node_modules',
+  'dist',
+  'build',
+  'out',
+  'coverage',
+  'target',
+]);
 
 interface WorkspaceSources {
   /** Raw contents of pnpm-workspace.yaml, when present. */

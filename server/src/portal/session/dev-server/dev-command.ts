@@ -9,9 +9,14 @@
  * Pure apart from one injected reader, so every case is a unit test rather than a temp directory.
  */
 
-import { readFileSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { desktopLaunch, workspacePackageDirs } from '@reticlehq/init';
+import {
+  NEVER_A_PACKAGE,
+  desktopLaunch,
+  findWorkspaceApps,
+  workspacePackageDirs,
+} from '@reticlehq/init';
 
 /** A dev script, as something an agent can actually run. */
 export interface DevCommand {
@@ -84,12 +89,17 @@ function scriptsOf(manifest: unknown): Record<string, unknown> {
   return scripts as Record<string, unknown>;
 }
 
+/** The package manager the lockfiles under `directory` identify, when one does. */
+function lockfileManager(
+  directory: string,
+  read: (path: string) => string | undefined,
+): string | undefined {
+  return LOCKFILES.find(({ file }) => read(join(directory, file)) !== undefined)?.manager;
+}
+
 /** The package manager the lockfiles under `directory` identify. Anything else is npm. */
 function packageManager(directory: string, read: (path: string) => string | undefined): string {
-  return (
-    LOCKFILES.find(({ file }) => read(join(directory, file)) !== undefined)?.manager ??
-    DEFAULT_PACKAGE_MANAGER
-  );
+  return lockfileManager(directory, read) ?? DEFAULT_PACKAGE_MANAGER;
 }
 
 /** The dev command for the package in `directory`, with the manager chosen by the caller. */
@@ -162,16 +172,32 @@ export function detectDevCommandInProject(
   directory: string,
   read: (path: string) => string | undefined = readTextFile,
   listDirs: (path: string) => readonly string[] = readDirNames,
+  exists: (path: string) => boolean = existsSync,
 ): DevCommand | undefined {
   const manager = packageManager(directory, read);
   const here = devCommandFor(directory, manager, read);
   if (here !== undefined) return here;
-  const packages = workspacePackageDirs({
-    readFile: (path) => read(join(directory, path)) ?? null,
-    listDirs: (path) => listDirs(join(directory, path)),
-  });
-  for (const sub of packages) {
-    const found = devCommandFor(join(directory, sub), manager, read);
+  const io = {
+    readFile: (path: string): string | null => read(join(directory, path)) ?? null,
+    listDirs: (path: string): readonly string[] => listDirs(join(directory, path)),
+    exists: (path: string): boolean => exists(join(directory, path)),
+  };
+  // App-shaped directories first: a repo can hold a docs site beside its app, and "the first
+  // manifest with a dev script" would hand over whichever the listing happened to order first.
+  const apps = findWorkspaceApps(io);
+  const packages = workspacePackageDirs({ readFile: io.readFile, listDirs: io.listDirs });
+  // A declaration does not stop an undeclared sibling from being the app either.
+  const immediate = io
+    .listDirs('.')
+    .filter((name) => !name.startsWith('.') && !NEVER_A_PACKAGE.has(name));
+  for (const sub of new Set([...apps, ...packages, ...immediate])) {
+    // A package with its own lockfile picks its own manager; a workspace member usually has none
+    // and inherits the root's.
+    const found = devCommandFor(
+      join(directory, sub),
+      lockfileManager(join(directory, sub), read) ?? manager,
+      read,
+    );
     if (found !== undefined) return { ...found, directory: sub };
   }
   return undefined;

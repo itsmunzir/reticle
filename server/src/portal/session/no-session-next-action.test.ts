@@ -33,7 +33,7 @@ describe('nextActionFor', () => {
       dev: { command: 'npm run dev', script: 'dev', directory: 'frontend' },
     });
     expect(next.action).toBe(NoSessionAction.START_DEV_SERVER);
-    expect(next.command).toBe('cd frontend && npm run dev');
+    expect(next.command).toBe('cd "frontend" && npm run dev');
     expect(next.reason).toContain('frontend');
   });
 

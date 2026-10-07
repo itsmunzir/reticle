@@ -247,7 +247,7 @@ export function nextActionFor(facts: NextActionFacts): NoSessionNextAction {
     }
     // The app can live one directory down; the command has to be runnable from where the daemon
     // stands, so it carries its own `cd` (reticle#1368).
-    const inApp = dev.directory === undefined ? '' : `cd ${dev.directory} && `;
+    const inApp = dev.directory === undefined ? '' : `cd "${dev.directory}" && `;
     return {
       action: NoSessionAction.START_DEV_SERVER,
       command: `${inApp}${dev.command}`,
