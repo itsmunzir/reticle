@@ -415,6 +415,31 @@ describe('a vanished session names the last URL it was on', () => {
     expect(stopped).toMatch(/start the app again/i);
     expect(stopped).not.toMatch(/reopen/i);
   });
+
+  it('says the dev server stopped even while another project listens elsewhere', () => {
+    const stopped = diagnoseNoSession({
+      everConnected: true,
+      initialized: true,
+      listening: [3000],
+      port: 4400,
+      lastKnownUrl: 'http://127.0.0.1:44549/orders',
+    });
+    expect(stopped).toMatch(/start the app again/i);
+    expect(stopped).not.toMatch(/reopen/i);
+    expect(stopped).not.toMatch(/already listening/i);
+  });
+
+  it('keeps the reopen advice when the departed port is slow, not gone', () => {
+    const slow = diagnoseNoSession({
+      everConnected: true,
+      initialized: true,
+      listening: [],
+      slowListeners: [44549],
+      port: 4400,
+      lastKnownUrl: 'http://127.0.0.1:44549/orders',
+    });
+    expect(slow).toMatch(/reopen/i);
+  });
 });
 
 /**
