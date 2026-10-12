@@ -51,6 +51,7 @@ function fakePool(): {
     sessionId: string | undefined;
     seedStorage?: unknown;
     headed?: boolean;
+    initScript?: unknown;
   }[];
   /** Every (registeredId, leaseId) pair the lease told the pool about. */
   aliased: [string, string][];
@@ -61,6 +62,7 @@ function fakePool(): {
     sessionId: string | undefined;
     seedStorage?: unknown;
     headed?: boolean;
+    initScript?: unknown;
   }[] = [];
   const headedIds = new Set<string>();
   const certSkipIds = new Set<string>();
@@ -87,11 +89,14 @@ function fakePool(): {
         ignoreHTTPSErrors?: boolean;
       } = {},
     ): Promise<Lease> {
+      // The real pool takes `initScript`; this double only has to prove it arrived.
+      const initScript = (opts as { initScript?: string }).initScript;
       acquired.push({
         url,
         sessionId: opts.sessionId,
         seedStorage: opts.seedStorage,
         ...(opts.headed === undefined ? {} : { headed: opts.headed }),
+        ...(initScript === undefined ? {} : { initScript }),
       });
       if (true === opts.headed && opts.sessionId !== undefined) headedIds.add(opts.sessionId);
       if (true === opts.ignoreHTTPSErrors && opts.sessionId !== undefined)
@@ -972,6 +977,69 @@ describe('prioritising a tab that is already open', () => {
 
     expect(out['sessionId']).toBeDefined();
     expect(out['url']).toBe('http://localhost:3000/');
+  });
+});
+
+/**
+ * A desktop shell injects bindings its views call on mount (`window.go`, `window.runtime`, an
+ * Electron preload object). A leased tab has none of them, so such a view throws before it can be
+ * verified. `initScript` is the stub: installed before any page script runs, for this lease only.
+ */
+describe('reticle_lease with an initScript stub', () => {
+  const STUB = 'window.go = { main: { App: { ListBooks: async () => [] } } };';
+
+  it('describes initScript as test doubles of the bindings a host shell injects', () => {
+    const definition = LEASE_TOOLS.find((entry) => entry.name === ReticleTool.LEASE_ACQUIRE);
+
+    expect(definition?.inputSchema['initScript']?.description).toMatch(/test double/i);
+    expect(definition?.inputSchema['initScript']?.description).toMatch(/Wails/);
+    expect(definition?.description).toMatch(/test double/i);
+    expect(definition?.description).toMatch(/host bindings/i);
+  });
+
+  it('propagates initScript to pool.acquire and reports the stub on the result', async () => {
+    const { pool, acquired } = fakePool();
+    const deps = { ...baseDeps, pool } as unknown as ToolDeps;
+
+    const out = (await tool(ReticleTool.LEASE_ACQUIRE)(deps, {
+      url: 'http://localhost:3000/books',
+      initScript: STUB,
+    })) as Record<string, unknown>;
+
+    expect(acquired).toHaveLength(1);
+    expect(acquired[0]?.initScript).toBe(STUB);
+    expect(String(out['hostStub'])).toMatch(/stub/i);
+  });
+
+  it('sends no initScript when none was asked for, so an untouched lease injects nothing', async () => {
+    const { pool, acquired } = fakePool();
+    const deps = { ...baseDeps, pool } as unknown as ToolDeps;
+
+    const out = (await tool(ReticleTool.LEASE_ACQUIRE)(deps, {
+      url: 'http://localhost:3000/',
+    })) as Record<string, unknown>;
+
+    expect(acquired[0]?.initScript).toBeUndefined();
+    expect('hostStub' in out).toBe(false);
+  });
+
+  it('releases a held lease when a stub is asked for: a loaded page cannot take an init script', async () => {
+    const { pool, acquired, released } = fakePool();
+    const deps = { ...baseDeps, pool } as unknown as ToolDeps;
+
+    const first = (await tool(ReticleTool.LEASE_ACQUIRE)(deps, {
+      url: 'http://localhost:3000/',
+    })) as { sessionId: string };
+    const second = (await tool(ReticleTool.LEASE_ACQUIRE)(deps, {
+      url: 'http://localhost:3000/books',
+      initScript: STUB,
+    })) as { sessionId: string; reused?: boolean };
+
+    expect(second.sessionId).not.toBe(first.sessionId);
+    expect(second.reused).toBeUndefined();
+    expect(released).toEqual([first.sessionId]);
+    expect(acquired).toHaveLength(2);
+    expect(acquired[1]?.initScript).toBe(STUB);
   });
 });
 

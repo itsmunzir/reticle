@@ -840,6 +840,97 @@ describe('BrowserPool', () => {
 });
 
 /**
+ * A view built for a desktop shell calls bindings the shell injects (`window.go`, `window.runtime`,
+ * an Electron preload object) on mount. In a leased tab those never exist, so the view throws before
+ * anything in it can be verified. An init script is the only place a stub can be defined: it runs
+ * after document creation and before any page script — which is what "before the app's first module"
+ * means — and it is scoped to this lease's page and disposed with the lease.
+ */
+describe('a lease given an init script', () => {
+  const STUB = 'window.go = { main: { App: { ListBooks: async () => [] } } };';
+
+  it("installs the caller's script before page.goto, so the app's first module sees it", async () => {
+    const { launch, browsers } = fakeLauncher();
+    const pool = new BrowserPool(launch, { maxContexts: 4, genSessionId: counterIds() });
+
+    const lease = await pool.acquire('http://localhost:3000/books', { initScript: STUB });
+
+    const page = browsers[0]?.contexts[0]?.pages[0];
+    expect(page?.initScripts.map((s) => s.script)).toEqual([STUB]);
+    // Registered before the navigation: playwright runs it at document start.
+    expect(page?.callOrder.indexOf('addInitScript')).toBeLessThan(
+      page?.callOrder.indexOf('goto:http://localhost:3000/books') ?? -1,
+    );
+    expect(pool.stubInstalled(lease.sessionId)).toBe(true);
+  });
+
+  it('keeps the stub for the whole lease and disposes it with the lease', async () => {
+    const { launch, browsers } = fakeLauncher();
+    const pool = new BrowserPool(launch, { maxContexts: 4, genSessionId: counterIds() });
+
+    const lease = await pool.acquire('http://localhost:3000/books', { initScript: STUB });
+    const page = browsers[0]?.contexts[0]?.pages[0];
+    // A reload or a later navigation in the same lease must still get the stub.
+    expect(page?.disposedScripts).toBe(0);
+
+    await lease.release();
+    expect(page?.disposedScripts).toBe(1);
+    expect(pool.stubInstalled(lease.sessionId)).toBe(false);
+  });
+
+  it('reports the stub under the name the app registered, like every other lease lookup', async () => {
+    const { launch, browsers } = fakeLauncher();
+    const pool = new BrowserPool(launch, { maxContexts: 4, genSessionId: counterIds() });
+
+    const lease = await pool.acquire('http://localhost:3000/books', { initScript: STUB });
+    pool.alias('my-app', lease.sessionId);
+
+    expect(pool.stubInstalled('my-app')).toBe(true);
+    expect(browsers[0]?.contexts).toHaveLength(1);
+  });
+
+  it('is false for a lease with no init script, and for a session that is not a lease', async () => {
+    const { launch } = fakeLauncher();
+    const pool = new BrowserPool(launch, { maxContexts: 4, genSessionId: counterIds() });
+
+    const lease = await pool.acquire('http://localhost:3000/');
+
+    expect(pool.stubInstalled(lease.sessionId)).toBe(false);
+    expect(pool.stubInstalled('not-a-lease')).toBe(false);
+  });
+
+  it('refuses the lease when the page cannot run an init script, rather than opening an unstubbed one', async () => {
+    class NoInitPage implements PooledPage {
+      goto(): Promise<unknown> {
+        return Promise.resolve(undefined);
+      }
+      close(): Promise<void> {
+        return Promise.resolve();
+      }
+      onCrash(): void {
+        // never fires in this test
+      }
+    }
+    const launch: Launcher = () => {
+      const b = new FakeBrowser();
+      const originalNewContext = b.newContext.bind(b);
+      b.newContext = async () => {
+        const ctx = await originalNewContext();
+        ctx.newPage = () => Promise.resolve(new NoInitPage());
+        return ctx;
+      };
+      return Promise.resolve(b);
+    };
+    const pool = new BrowserPool(launch, { maxContexts: 4, genSessionId: counterIds() });
+
+    await expect(pool.acquire('http://localhost:3000/books', { initScript: STUB })).rejects.toThrow(
+      /does not support init scripts/,
+    );
+    expect(pool.activeCount()).toBe(0);
+  });
+});
+
+/**
  * The platform chat can ask for a drive the person watches in a window, beside the headless ones it
  * already runs. One pool, two browsers: a headed one launched only when first asked for.
  */

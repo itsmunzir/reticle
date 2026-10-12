@@ -40,7 +40,7 @@ import { noteActed, noteFirstVerdict, noteOnboardingFirst } from '@/telemetry/on
 import { OnboardingPhase, OnboardingStepStatus } from '@reticlehq/core/telemetry';
 import { DiscoveryInvite } from '@reticlehq/core';
 import { SESSION_ID_ARG, sessionIdFromArgs, spentRefFromArgs } from './tools-helpers.js';
-import { EnvelopeKey, STEP_SHOT_TOOLS } from './tool-kit.js';
+import { EnvelopeKey, HOST_STUB_NOTE, STEP_SHOT_TOOLS } from './tool-kit.js';
 import { ReticleTool } from '@reticlehq/core';
 import { takeFeedbackPrompt } from './feedback-tools.js';
 import { takeFeedbackUndelivered } from '@/telemetry/feedback-delivery.js';
@@ -831,6 +831,14 @@ async function dispatchTool<Ext>(
   const arrivedId = 'string' === typeof result['sessionId'] ? result['sessionId'] : driven.id;
   const resolved = deps.sessions.get?.(arrivedId) ?? driven;
   const envelope: Record<string, unknown> = {};
+  // A leased tab opened with `initScript` runs a STUB of the bindings a desktop shell injects. Said
+  // on every session-bound result, not only on verdicts, for the same reason health is: a green from
+  // that tab proves the app's view logic, and nothing else in the result would say so.
+  // Optional-called: a partial pool in a test double has no lookup, and absence must read as "no
+  // stub", never as a crash on the whole tool surface.
+  if (true === deps.pool?.stubInstalled?.(resolved.id)) {
+    envelope[EnvelopeKey.HOST_STUB] = HOST_STUB_NOTE;
+  }
   // The health block is idempotent: add it only when the handler didn't already include a `session`.
   if (!('session' in result)) Object.assign(envelope, healthEnvelope(resolved));
   // Lease + age-warning are INDEPENDENT of the health block. Previously the `'session' in result`

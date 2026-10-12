@@ -41,7 +41,7 @@ import {
   type SeedStorage,
 } from '@reticlehq/core';
 import { HudVisibility, ReticleTool, SESSION_HEALTH } from '@reticlehq/core';
-import type { ToolDef, ToolDeps } from './tool-kit.js';
+import { HOST_STUB_NOTE, type ToolDef, type ToolDeps } from './tool-kit.js';
 import type { BrowserPool } from '@/portal/pool/browser-pool.js';
 import { asString } from '@reticlehq/core';
 import { chromiumPreflightRefusal } from '@/command/cli/doctor/browser/chromium-hint.js';
@@ -375,7 +375,7 @@ export function hasOriginLock(origin: string): boolean {
   return originAcquireLocks.has(origin);
 }
 
-export const LEASE_ACQUIRE_TOOL: ToolDef = {
+const leaseAcquireTool: ToolDef = {
   name: ReticleTool.LEASE_ACQUIRE,
   description:
     'Lease a fresh isolated browser context from the shared pool (shown or hidden as the daemon was started; `headed: true` forces a window) and navigate it to the app URL (the app must already be running; one with no Reticle SDK gets one supplied, reported as zeroInstall). If this origin is already leased and still connected, this returns THAT session rather than minting a second tab — a second acquire on the same origin poisons default session resolution. Returns the sessionId the leased tab registers — pass it to other tools. The pool keeps all leases in ONE browser and caps concurrency; if at capacity this waits for a free slot. Release with reticle_lease{action:"release"} when the flow is done. PREFER AN ALREADY-OPEN TAB: if reticle_sessions lists a non-leased session for this app, drive THAT instead — a lease is invisible to the person watching the app, whose HUD lives in their own tab, and a tab flagged hidden/throttled is often still driveable. Lease for isolation you actually need (a second identity, a clean context, parallel flows) or when driving the open tab has failed — this call answers with `preferExisting` when a live tab was available.',
@@ -390,6 +390,12 @@ export const LEASE_ACQUIRE_TOOL: ToolDef = {
     seedStorage: SeedStorageSchema.optional().describe(
       'Initial storage state (local, session and cookies) to seed before the first navigation (e.g. `seedStorage: { local: { token: "..." } }` to start already authenticated).',
     ),
+    initScript: z
+      .string()
+      .optional()
+      .describe(
+        "JavaScript installed in the tab BEFORE any of the page's own scripts run. Use it for TEST DOUBLES of the host bindings a desktop shell injects — Wails `window.go.*`, Tauri `window.runtime`/`__TAURI_INTERNALS__`, an Electron preload object — so a view that calls them on mount is driven against the stub instead of throwing. It stays on for this lease only, and it is disposed with the lease. Every verdict on this lease carries a note that a stub was installed, so a green is never read as one against the real shell.",
+      ),
     headed: z
       .boolean()
       .optional()
@@ -425,6 +431,12 @@ export const LEASE_ACQUIRE_TOOL: ToolDef = {
       .optional()
       .describe(
         'Present when this app ships no Reticle SDK and the lease supplied one. Verdicts work on the DOM, network, console and routes; there is no framework adapter, so no component state and no source file:line. Install with `npx @reticlehq/server init` for those.',
+      ),
+    hostStub: z
+      .string()
+      .optional()
+      .describe(
+        'Present when this leased tab runs an init script stubbing the bindings a desktop shell injects. Verdicts on this lease are about the app with that stub, not about the real shell.',
       ),
     notReadyReason: z
       .enum([
@@ -485,6 +497,9 @@ export const LEASE_ACQUIRE_TOOL: ToolDef = {
     const headed = true === args['headed'];
     const hud = Object.values(HudVisibility).find((v) => v === args['hud']);
     const permissions = parseLeasePermissions(args['permissions']);
+    // The stub of the shell bindings, when the caller supplied one. Installed by the pool before
+    // the first navigation, so it is already defined when the app's first module runs.
+    const initScript = asString(args['initScript']);
     const seedStorageArg = args['seedStorage'];
     let validatedSeed: SeedStorage | undefined;
     if (seedStorageArg !== undefined) {
@@ -523,6 +538,19 @@ export const LEASE_ACQUIRE_TOOL: ToolDef = {
     try {
       // Only a lease THIS caller took: another agent's tab is never reused or released (#1226).
       // A window asked for is never answered with the headless tab on that origin, nor the reverse.
+      // An init script has to exist before the page's own scripts run, which a loaded page cannot
+      // do — so a held lease of the requested kind is released FIRST, and the resolve below then
+      // finds nothing and mints a fresh context with the stub. A lease of the other kind is left
+      // alone, exactly as it is when a window was asked for.
+      const heldForStub =
+        origin === undefined ? undefined : pool.leaseIdOnOrigin(origin, deps.attachId);
+      if (
+        initScript !== undefined &&
+        heldForStub !== undefined &&
+        pool.isHeaded(heldForStub) === headed
+      ) {
+        await pool.release(heldForStub);
+      }
       const held = origin === undefined ? undefined : pool.leaseIdOnOrigin(origin, deps.attachId);
       const existing = held !== undefined && pool.isHeaded(held) === headed ? held : undefined;
       // A context's certificate setting is fixed when it is made, so an explicit request for the
@@ -575,6 +603,9 @@ export const LEASE_ACQUIRE_TOOL: ToolDef = {
             leased: pool.activeCount(),
             queued: pool.queuedCount(),
             hint: alreadyHeldHint(resolved, origin),
+            // Asked of the pool, not remembered here: the stub was installed when THIS lease was
+            // minted, and the caller reusing it now may be seeing it for the first time.
+            ...(true === pool.stubInstalled?.(existing) ? { hostStub: HOST_STUB_NOTE } : {}),
             ...(alreadyOpen === undefined
               ? {}
               : { preferExisting: { sessionId: alreadyOpen, note: PREFER_EXISTING_NOTE } }),
@@ -596,6 +627,7 @@ export const LEASE_ACQUIRE_TOOL: ToolDef = {
           ...(headed ? { headed } : {}),
           ...(deps.attachId === undefined ? {} : { owner: deps.attachId }),
           ...(validatedSeed !== undefined ? { seedStorage: validatedSeed } : {}),
+          ...(initScript !== undefined ? { initScript } : {}),
           ...(permissions !== undefined ? { permissions } : {}),
           ...(true === args['ignoreHTTPSErrors'] ? { ignoreHTTPSErrors: true } : {}),
         });
@@ -668,6 +700,7 @@ export const LEASE_ACQUIRE_TOOL: ToolDef = {
               },
             }),
         ...(versionSkew === undefined ? {} : { versionSkew }),
+        ...(initScript === undefined ? {} : { hostStub: HOST_STUB_NOTE }),
         ...hintOf(
           ready
             ? undefined
@@ -682,6 +715,21 @@ export const LEASE_ACQUIRE_TOOL: ToolDef = {
       }
     }
   },
+};
+
+/**
+ * What `initScript` is for, said in the tool's own description.
+ *
+ * Composed onto the sentence above rather than written inside it, so the surface keeps ONE story
+ * about the stub: the tool takes a test double of the host bindings, and every verdict on that
+ * lease says a stub was installed.
+ */
+const INIT_SCRIPT_DESCRIPTION =
+  ' `initScript` installs JavaScript before any page script runs, for TEST DOUBLES of the host bindings a desktop shell injects (Wails `window.go.*`, Tauri `window.runtime`, an Electron preload object), so a view that calls them on mount reaches its data path instead of throwing; every verdict on that lease carries a note that a stub was installed.';
+
+export const LEASE_ACQUIRE_TOOL: ToolDef = {
+  ...leaseAcquireTool,
+  description: `${leaseAcquireTool.description}${INIT_SCRIPT_DESCRIPTION}`,
 };
 
 /** The whole not-connected diagnosis, gathered and worded. Split out so the acquire path stays flat. */

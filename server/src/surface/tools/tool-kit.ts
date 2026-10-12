@@ -295,6 +295,11 @@ export const EnvelopeKey = {
   FEEDBACK_UNDELIVERED: 'feedback_undelivered',
   /** Once per project: verified runs exist only on this machine. See platform-moment.ts. */
   PLATFORM: 'platform',
+  /**
+   * This leased tab runs a STUB of the bindings a desktop shell injects (`reticle_lease acquire`'s
+   * `initScript`), so a verdict here is about the app's view logic and not about the real shell.
+   */
+  HOST_STUB: 'host_stub',
   /** The one thing to do next: declare the request, yield, fix sync, connect. See next-step.ts. */
   NEXT: 'next',
   /** One-shot: a Harness drive started or finished, from any origin, and how to read it. */
@@ -310,6 +315,17 @@ export const EnvelopeKey = {
   NOTICES: 'notices',
 } as const;
 export type EnvelopeKey = (typeof EnvelopeKey)[keyof typeof EnvelopeKey];
+
+/**
+ * The sentence every session-bound result carries while its leased tab runs on a stubbed shell.
+ *
+ * Spliced wherever the tab's health is spliced, because the fact matters to exactly the same
+ * readings: a green from a tab whose `window.go` Reticle faked is not evidence about the real shell,
+ * and nothing else in the result would say so.
+ */
+export const HOST_STUB_NOTE =
+  'a stub for the bindings a desktop shell injects was installed in this tab before its scripts ' +
+  'ran, so a green here is not a verdict against the real shell.';
 
 /**
  * The tools whose every answer leaves a screenshot of the page. A sequence (`reticle_act` with

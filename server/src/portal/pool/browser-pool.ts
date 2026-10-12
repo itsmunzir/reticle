@@ -97,6 +97,15 @@ interface BrowserSlot {
 /** What a headed lease is refused with where no window can be opened. */
 export const NO_HEADED_BROWSER = 'no headed browser can be opened here';
 
+/**
+ * What an acquire that asked for an init script is refused with when the page cannot run one.
+ *
+ * A refusal rather than a lease: the caller asked for a stub of the bindings a desktop shell
+ * injects, and a tab opened without it would throw in the app's view and read as a broken app.
+ */
+const INIT_SCRIPT_UNSUPPORTED =
+  'Init script failed: this page does not support init scripts, so the requested stub would not be there';
+
 interface ActiveLease {
   /** Whether it lives in the headed browser: that browser's death is this lease's death. */
   headed: boolean;
@@ -122,6 +131,12 @@ interface ActiveLease {
    * context for "why did the page look frozen for a moment", not a log an agent needs to replay.
    */
   lastDialogMessage?: string;
+  /**
+   * The disposable handle of the caller's init script, when the lease was opened with one — a stub
+   * of the bindings a desktop shell injects. Disposed with the lease, so a reload or a later
+   * navigation inside the lease keeps the stub.
+   */
+  hostStub?: InitScriptHandle;
   /** What this lease was granted when it opened. It never changes on an open lease. */
   permissions: readonly string[];
   /** Whether its context accepts any TLS certificate (#1255). Fixed when the context is made. */
@@ -425,6 +440,15 @@ export class BrowserPool {
   }
 
   /**
+   * Whether this lease's page runs a caller-supplied init script — a stub of the bindings a desktop
+   * shell injects. Alias-resolved like every agent-facing lookup, and false for any session that is
+   * not a lease with a stub, so a verdict can say when it was measured against a fake shell.
+   */
+  stubInstalled(sessionId: string): boolean {
+    return this.#active.get(this.#leaseIdOf(sessionId))?.hostStub !== undefined;
+  }
+
+  /**
    * What the leased page's `Notification.permission` says, or undefined when it cannot be asked.
    *
    * Read back rather than inferred from the grant, because the headless shell answers `denied`
@@ -503,6 +527,12 @@ export class BrowserPool {
       owner?: string;
       /** In a browser with a window the person can watch. */
       headed?: boolean;
+      /**
+       * JavaScript installed before any page script runs, for this lease only. A view built for a
+       * desktop shell calls bindings the shell injects (`window.go`, `window.runtime`, a preload
+       * object) on mount; a stub here is what lets it reach its data path in a leased tab.
+       */
+      initScript?: string;
       /** Granted on the lease's origin before the first navigation, so the first render sees them. */
       permissions?: readonly string[];
       /** Accept a self-signed or local-CA dev certificate for this lease's context only (#1255). */
@@ -528,6 +558,17 @@ export class BrowserPool {
       if (opts.permissions !== undefined)
         await grantLeasePermissions(context, opts.permissions, url);
       const page = await context.newPage();
+      // A caller-supplied init script is a stub of the bindings a desktop shell injects, and it has
+      // to exist before the app's first module runs. Installed here — before goto — so the very
+      // first document gets it, and kept for the lease (see hostStub) so a reload keeps it too.
+      let hostStub: InitScriptHandle | undefined;
+      if (opts.initScript !== undefined) {
+        const added = await page.addInitScript?.(opts.initScript);
+        if (added === undefined || 'function' !== typeof added.dispose) {
+          throw new Error(INIT_SCRIPT_UNSUPPORTED);
+        }
+        hostStub = added;
+      }
       // Per-page crash isolation: if THIS renderer dies, reclaim only this lease — the shared browser
       // and every other agent's context keep running. (A full browser death is handled by #onCrash.)
       page.onCrash(() => {
@@ -605,6 +646,7 @@ export class BrowserPool {
         ignoresHTTPSErrors: true === opts.ignoreHTTPSErrors,
         ...(pending === undefined ? {} : { dialFailureUrl: pending }),
         ...(pendingDialogMessage === undefined ? {} : { lastDialogMessage: pendingDialogMessage }),
+        ...(hostStub === undefined ? {} : { hostStub }),
       });
       return {
         sessionId,
@@ -678,6 +720,9 @@ export class BrowserPool {
     for (const [registered, leaseId] of this.#aliases) {
       if (leaseId === sessionId) this.#aliases.delete(registered);
     }
+    // Disposed with the lease, which is what "for that lease only" means. Best-effort: a context
+    // that is already gone (a crash) makes the disposal moot, not a reason to fail the release.
+    await lease.hostStub?.dispose().catch(() => undefined);
     await lease.context.close().catch(() => undefined);
     this.#releaseSlot();
   }
