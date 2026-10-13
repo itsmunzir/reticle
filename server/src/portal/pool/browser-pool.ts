@@ -137,6 +137,11 @@ interface ActiveLease {
    * navigation inside the lease keeps the stub.
    */
   hostStub?: InitScriptHandle;
+  /**
+   * The text of that init script, kept so a lease that asks for the SAME stub again is recognised and
+   * reused instead of being torn down and remade — see `hostStubScript` and the lease tool's reuse.
+   */
+  hostStubScript?: string;
   /** What this lease was granted when it opened. It never changes on an open lease. */
   permissions: readonly string[];
   /** Whether its context accepts any TLS certificate (#1255). Fixed when the context is made. */
@@ -449,6 +454,15 @@ export class BrowserPool {
   }
 
   /**
+   * The init script this lease installed, or undefined when it runs none. Alias-resolved like
+   * `stubInstalled`. The lease tool compares it to the script a caller asks for: the same text means
+   * the held tab already is what was asked for, so it is reused rather than released and remade.
+   */
+  hostStubScript(sessionId: string): string | undefined {
+    return this.#active.get(this.#leaseIdOf(sessionId))?.hostStubScript;
+  }
+
+  /**
    * What the leased page's `Notification.permission` says, or undefined when it cannot be asked.
    *
    * Read back rather than inferred from the grant, because the headless shell answers `denied`
@@ -646,7 +660,9 @@ export class BrowserPool {
         ignoresHTTPSErrors: true === opts.ignoreHTTPSErrors,
         ...(pending === undefined ? {} : { dialFailureUrl: pending }),
         ...(pendingDialogMessage === undefined ? {} : { lastDialogMessage: pendingDialogMessage }),
-        ...(hostStub === undefined ? {} : { hostStub }),
+        ...(hostStub === undefined || opts.initScript === undefined
+          ? {}
+          : { hostStub, hostStubScript: opts.initScript }),
       });
       return {
         sessionId,

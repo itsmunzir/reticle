@@ -375,7 +375,7 @@ export function hasOriginLock(origin: string): boolean {
   return originAcquireLocks.has(origin);
 }
 
-const leaseAcquireTool: ToolDef = {
+export const LEASE_ACQUIRE_TOOL: ToolDef = {
   name: ReticleTool.LEASE_ACQUIRE,
   description:
     'Lease a fresh isolated browser context from the shared pool (shown or hidden as the daemon was started; `headed: true` forces a window) and navigate it to the app URL (the app must already be running; one with no Reticle SDK gets one supplied, reported as zeroInstall). If this origin is already leased and still connected, this returns THAT session rather than minting a second tab — a second acquire on the same origin poisons default session resolution. Returns the sessionId the leased tab registers — pass it to other tools. The pool keeps all leases in ONE browser and caps concurrency; if at capacity this waits for a free slot. Release with reticle_lease{action:"release"} when the flow is done. PREFER AN ALREADY-OPEN TAB: if reticle_sessions lists a non-leased session for this app, drive THAT instead — a lease is invisible to the person watching the app, whose HUD lives in their own tab, and a tab flagged hidden/throttled is often still driveable. Lease for isolation you actually need (a second identity, a clean context, parallel flows) or when driving the open tab has failed — this call answers with `preferExisting` when a live tab was available.',
@@ -538,16 +538,19 @@ const leaseAcquireTool: ToolDef = {
     try {
       // Only a lease THIS caller took: another agent's tab is never reused or released (#1226).
       // A window asked for is never answered with the headless tab on that origin, nor the reverse.
-      // An init script has to exist before the page's own scripts run, which a loaded page cannot
-      // do — so a held lease of the requested kind is released FIRST, and the resolve below then
-      // finds nothing and mints a fresh context with the stub. A lease of the other kind is left
-      // alone, exactly as it is when a window was asked for.
+      // A held lease that already runs the SAME stub is exactly what the caller asked for, so it is
+      // left alone and reused below — releasing it would throw away the tab, and everything loaded
+      // in it, for nothing. A lease with no stub, or with a different one, is released FIRST instead:
+      // an init script has to exist before the page's own scripts run, which a loaded page cannot
+      // do, and the resolve below then finds nothing and mints a fresh context with the stub. A
+      // lease of the other kind is left alone, exactly as it is when a window was asked for.
       const heldForStub =
         origin === undefined ? undefined : pool.leaseIdOnOrigin(origin, deps.attachId);
       if (
         initScript !== undefined &&
         heldForStub !== undefined &&
-        pool.isHeaded(heldForStub) === headed
+        pool.isHeaded(heldForStub) === headed &&
+        pool.hostStubScript?.(heldForStub) !== initScript
       ) {
         await pool.release(heldForStub);
       }
@@ -715,21 +718,6 @@ const leaseAcquireTool: ToolDef = {
       }
     }
   },
-};
-
-/**
- * What `initScript` is for, said in the tool's own description.
- *
- * Composed onto the sentence above rather than written inside it, so the surface keeps ONE story
- * about the stub: the tool takes a test double of the host bindings, and every verdict on that
- * lease says a stub was installed.
- */
-const INIT_SCRIPT_DESCRIPTION =
-  ' `initScript` installs JavaScript before any page script runs, for TEST DOUBLES of the host bindings a desktop shell injects (Wails `window.go.*`, Tauri `window.runtime`, an Electron preload object), so a view that calls them on mount reaches its data path instead of throwing; every verdict on that lease carries a note that a stub was installed.';
-
-export const LEASE_ACQUIRE_TOOL: ToolDef = {
-  ...leaseAcquireTool,
-  description: `${leaseAcquireTool.description}${INIT_SCRIPT_DESCRIPTION}`,
 };
 
 /** The whole not-connected diagnosis, gathered and worded. Split out so the acquire path stays flat. */

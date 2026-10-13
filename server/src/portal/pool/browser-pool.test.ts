@@ -899,6 +899,21 @@ describe('a lease given an init script', () => {
     expect(pool.stubInstalled('not-a-lease')).toBe(false);
   });
 
+  it('remembers the script text, so a repeat acquire can tell the same stub from a different one', async () => {
+    const { launch } = fakeLauncher();
+    const pool = new BrowserPool(launch, { maxContexts: 4, genSessionId: counterIds() });
+
+    const lease = await pool.acquire('http://localhost:3000/books', { initScript: STUB });
+    pool.alias('my-app', lease.sessionId);
+
+    expect(pool.hostStubScript(lease.sessionId)).toBe(STUB);
+    expect(pool.hostStubScript('my-app')).toBe(STUB);
+    expect(pool.hostStubScript('not-a-lease')).toBeUndefined();
+
+    const plain = await pool.acquire('http://localhost:3001/');
+    expect(pool.hostStubScript(plain.sessionId)).toBeUndefined();
+  });
+
   it('refuses the lease when the page cannot run an init script, rather than opening an unstubbed one', async () => {
     class NoInitPage implements PooledPage {
       goto(): Promise<unknown> {
